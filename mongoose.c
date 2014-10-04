@@ -3155,8 +3155,9 @@ static void gmt_time_string(char *buf, size_t buf_len, time_t *t) {
 }
 
 static void open_file_endpoint(struct connection *conn, const char *path,
-                               file_stat_t *st) {
-  char date[64], lm[64], etag[64], range[64], headers[500];
+                               file_stat_t *st, const char *extra_headers) {
+  char date[64], lm[64], etag[64], range[64],
+    headers[500 + (extra_headers ? strlen(extra_headers) : 0)];
   const char *msg = "OK", *hdr;
   time_t curtime = time(NULL);
   int64_t r1, r2;
@@ -3200,11 +3201,12 @@ static void open_file_endpoint(struct connection *conn, const char *path,
                   "Content-Length: %" INT64_FMT "\r\n"
                   "Connection: %s\r\n"
                   "Accept-Ranges: bytes\r\n"
-                  "%s%s\r\n",
+                  "%s%s%s\r\n",
                   conn->mg_conn.status_code, msg, date, lm, etag,
                   (int) mime_vec.len, mime_vec.ptr, conn->cl,
                   suggest_connection_header(&conn->mg_conn),
-                  range, MONGOOSE_USE_EXTRA_HTTP_HEADERS);
+                  range, MONGOOSE_USE_EXTRA_HTTP_HEADERS,
+                  extra_headers);
   ns_send(conn->ns_conn, headers, n);
 
   if (!strcmp(conn->mg_conn.request_method, "HEAD")) {
@@ -4330,7 +4332,7 @@ static void proxify_connection(struct connection *conn) {
 
 #ifndef MONGOOSE_NO_FILESYSTEM
 void mg_send_file_internal(struct mg_connection *c, const char *file_name,
-                           file_stat_t *st, int exists) {
+                           file_stat_t *st, int exists, const char *extra_headers) {
   struct connection *conn = MG_CONN_2_CONN(c);
   char path[MAX_PATH_SIZE];
   const int is_directory = S_ISDIR(st->st_mode);
@@ -4382,15 +4384,15 @@ void mg_send_file_internal(struct mg_connection *c, const char *file_name,
   } else if ((conn->endpoint.fd = open(path, O_RDONLY | O_BINARY)) != -1) {
     // O_BINARY is required for Windows, otherwise in default text mode
     // two bytes \r\n will be read as one.
-    open_file_endpoint(conn, path, st);
+    open_file_endpoint(conn, path, st, extra_headers);
   } else {
     send_http_error(conn, 404, NULL);
   }
 }
-void mg_send_file(struct mg_connection *c, const char *file_name) {
+void mg_send_file(struct mg_connection *c, const char *file_name, const char *extra_headers) {
   file_stat_t st;
   const int exists = stat(file_name, &st) == 0;
-  mg_send_file_internal(c, file_name, &st, exists);
+  mg_send_file_internal(c, file_name, &st, exists, extra_headers);
 }
 #endif  // !MONGOOSE_NO_FILESYSTEM
 
@@ -4473,7 +4475,7 @@ static void open_local_endpoint(struct connection *conn, int skip_user) {
     handle_put(conn, path);
 #endif
   } else {
-    mg_send_file_internal(&conn->mg_conn, path, &st, exists);
+    mg_send_file_internal(&conn->mg_conn, path, &st, exists, NULL);
   }
 #endif  // MONGOOSE_NO_FILESYSTEM
 }
